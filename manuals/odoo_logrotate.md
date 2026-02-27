@@ -1,6 +1,7 @@
 # Rotación de logs de Odoo
 
-`logrotate` es una herramienta del sistema que gestiona la rotación automática de archivos de log. Permite mantener los logs organizados por fecha, evitando que crezcan indefinidamente y consuman todo el espacio en disco.
+`logrotate` es una herramienta del sistema que gestiona la rotación automática de archivos de log. Permite mantener los
+logs organizados por fecha, evitando que crezcan indefinidamente y consuman todo el espacio en disco.
 
 ## Documentación
 
@@ -14,7 +15,8 @@
 nano /etc/logrotate.d/odoo
 ```
 
-> **Nota:** El archivo debe pertenecer a `root` con permisos `644`. Logrotate ignora archivos con permisos de escritura para otros usuarios.
+> **Nota:** El archivo debe pertenecer a `root` con permisos `644`. Logrotate ignora archivos con permisos de escritura
+> para otros usuarios.
 
 ### Configuración de ejemplo
 
@@ -33,18 +35,19 @@ nano /etc/logrotate.d/odoo
 
 ### Descripción de parámetros
 
-| Directiva | Descripción |
-|-----------|-------------|
-| `su odoo odoo` | Ejecuta la rotación con el usuario y grupo `odoo` |
-| `daily` | Rota el log una vez al día |
-| `rotate 36500` | Conserva hasta 36500 archivos rotados (~100 años) |
-| `dateext` | Agrega la fecha como extensión al nombre del archivo rotado |
-| `dateformat .%Y-%m-%d.log` | Formato de la fecha en el nombre: `.2025-01-31.log` |
-| `copytruncate` | Copia el log activo y luego lo vacía, sin necesidad de reiniciar Odoo |
-| `missingok` | No genera error si el archivo de log no existe |
-| `notifempty` | No rota el log si está vacío |
+| Directiva                  | Descripción                                                           |
+|----------------------------|-----------------------------------------------------------------------|
+| `su odoo odoo`             | Ejecuta la rotación con el usuario y grupo `odoo`                     |
+| `daily`                    | Rota el log una vez al día                                            |
+| `rotate 36500`             | Conserva hasta 36500 archivos rotados (~100 años)                     |
+| `dateext`                  | Agrega la fecha como extensión al nombre del archivo rotado           |
+| `dateformat .%Y-%m-%d.log` | Formato de la fecha en el nombre: `.2025-01-31.log`                   |
+| `copytruncate`             | Copia el log activo y luego lo vacía, sin necesidad de reiniciar Odoo |
+| `missingok`                | No genera error si el archivo de log no existe                        |
+| `notifempty`               | No rota el log si está vacío                                          |
 
-> **Nota:** `copytruncate` evita reiniciar el servicio Odoo tras la rotación. Sin embargo, puede perder las líneas escritas entre la copia y el truncado del archivo (ventana de milisegundos).
+> **Nota:** `copytruncate` evita reiniciar el servicio Odoo tras la rotación. Sin embargo, puede perder las líneas
+> escritas entre la copia y el truncado del archivo (ventana de milisegundos).
 
 ## Verificación
 
