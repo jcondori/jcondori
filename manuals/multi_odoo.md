@@ -108,7 +108,7 @@ docker run -d \
   -e PORT=5432 \
   -e USER=odoo \
   -e PASSWORD=odoo \
-  -v /opt/odoo/empresa01/data:/var/lib/odoo \
+  -v /opt/odoo/empresa01/data:/var/lib/odoo/.local/share/Odoo \
   -v /opt/odoo/empresa01/logs:/var/log/odoo \
   -v /opt/odoo/empresa01/odoo.conf:/etc/odoo/odoo.conf:ro \
   -v /opt/odoo/empresa01/addons:/mnt/extra-addons:ro \
