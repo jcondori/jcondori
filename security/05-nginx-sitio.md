@@ -57,7 +57,7 @@ El redirect del puerto 80 ya lo cubre el server `*.jcondori.com` del paso 4.
 | `proxy_pass` | Puerto local de la aplicación, en `127.0.0.1` |
 | Cabeceras `add_header` | Si la aplicación ya las envía, bórralas aquí (ver abajo) |
 | `client_max_body_size` | La subida más grande que la aplicación acepta |
-| `location = /login` | La ruta de login de la aplicación; sin login propio, borra el bloque |
+| `location = /login` | La ruta de login de la aplicación; sin login propio, borra el bloque. Repite el bloque para cada ruta que acepte un secreto adivinable (p. ej. una API con token en cabecera) |
 | Peticiones largas | `proxy_read_timeout` solo en el `location` que lo necesite |
 | Archivos estáticos con `root` | Solo entonces, bloquear archivos ocultos (ver abajo) |
 

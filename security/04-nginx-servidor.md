@@ -206,7 +206,9 @@ propio server del 80 (`if ($host = ...) { return 301 ... }` y `return 404;`). Re
    ```
 
 2. Si contiene el server del 443 de un sitio, muévelo a su propio archivo `conf.d/<subdominio>.conf` (como la plantilla
-   del [paso 5](05-nginx-sitio.md), con las rutas de Certbot) y valida con `nginx -t`.
+   del [paso 5](05-nginx-sitio.md), con las rutas de Certbot) y valida con `nginx -t`. Copia tal cual las líneas
+   `# managed by Certbot` (`ssl_certificate*`, `include options-ssl-nginx.conf`, `ssl_dhparam`): el `include` trae cifrados DHE,
+   que necesitan el `ssl_dhparam`.
 3. Cambia los servers del 80 por los del 4.3, con una diferencia: en el del dominio, la redirección va dentro de
    `location /` y no a nivel de server, y se deja pasar el desafío de Let's Encrypt:
 
@@ -235,8 +237,16 @@ propio server del 80 (`if ($host = ...) { return 301 ... }` y `return 404;`). Re
 4. Prueba la renovación:
 
    ```bash
-   certbot renew --dry-run
+   grep -E "authenticator|installer" /etc/letsencrypt/renewal/*.conf
+   certbot renew --dry-run --no-random-sleep-on-renew
    ```
+
+   La primera línea dice cómo renueva Certbot. Con `authenticator = nginx` (lo que deja `certbot --nginx`), el plugin
+   inyecta su propio `location` exacto para el desafío, así que el `location /.well-known/acme-challenge/` de arriba no
+   se usa, pero tampoco estorba. Con `webroot`, es el que responde.
+
+   `--no-random-sleep-on-renew` hace falta cuando no hay terminal (por ejemplo, `ssh host 'certbot renew ...'`): sin él,
+   Certbot espera hasta 8 minutos al azar antes de empezar (`Non-interactive renewal: random delay of ... seconds`).
 
 ### Sitios nuevos (paso 5)
 

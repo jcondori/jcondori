@@ -60,9 +60,17 @@ En un proxy, el 404 lo responde la aplicación y no queda en `error.log`. Por es
 
 ```ini
 [Definition]
-failregex = ^<HOST> - \S+ \[[^\]]+\] "(?:GET|POST|HEAD) /(?:[^" ]*/)?(?:\.env|\.git/|wp-login\.php|wp-admin|xmlrpc\.php|phpmyadmin|pma/|cgi-bin/|vendor/phpunit|boaform|HNAP1)[^"]*" (?:301|400|403|404|444)
+failregex = ^<HOST> - \S+ \[[^\]]*\] "(?:GET|POST|HEAD) /(?:[^" ]*/)?(?:\.env|\.git/|wp-login\.php|wp-admin|wp-config|xmlrpc\.php|phpmyadmin|pma/|cgi-bin/|vendor/phpunit|boaform|HNAP1|phpinfo\.php|actuator/)[^"]*" (?:301|302|400|401|403|404|444)
 ignoreregex =
 ```
+
+Dos detalles de la expresión que no se ven a simple vista:
+
+- **`\[[^\]]*\]`, con `*` y no `+`.** Fail2ban detecta la fecha, la **quita de la línea** y aplica `failregex` sobre lo
+  que queda: el `[08/Nov/2026:19:20:00 +0000]` llega como `[]`. Con `+` el filtro no coincide con nada (0 de 4352
+  líneas en un servidor con 1300 escaneos reales), y tampoco con la línea suelta de 6.4.
+- **302 y 401.** Una aplicación con login suele responder a cualquier ruta desconocida con una redirección a su página
+  de login (302) o con un 401, no con un 404. En un servidor con una app así, el 60 % de los escaneos eran 302.
 
 Añade a `/etc/fail2ban/jail.d/nginx.local`:
 

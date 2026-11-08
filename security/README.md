@@ -84,6 +84,30 @@ cp -a /etc/ssh/sshd_config /root/sshd_config.bak.$(date +%Y%m%d%H%M%S)
 sshd -t && systemctl reload ssh
 ```
 
+### Actualizaciones y logs del sistema
+
+Las actualizaciones de seguridad deben instalarse solas. En Ubuntu vienen activas; compruébalo:
+
+```bash
+systemctl is-enabled unattended-upgrades
+cat /etc/apt/apt.conf.d/20auto-upgrades   # las dos líneas en "1"
+```
+
+Si falta, `apt install -y unattended-upgrades && dpkg-reconfigure -plow unattended-upgrades`.
+
+Pon un tope al journal de systemd. Sin él crece hasta el 10 % del disco (en una VM de 30 GB se vio en 1,4 GB), y
+Fail2ban lo lee entero al probar el filtro de SSH (paso 2): en una VM de 1 GB de RAM esa prueba no termina.
+
+```bash
+mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nSystemMaxUse=200M\n' > /etc/systemd/journald.conf.d/size.conf
+systemctl restart systemd-journald
+journalctl --vacuum-size=200M
+journalctl --disk-usage
+```
+
+Usa `journalctl --vacuum-*`, nunca `rm` sobre `/var/log/journal`: systemd-journald tiene esos archivos abiertos.
+
 ### Verificación del paso 1
 
 En la VM, ver qué escucha:

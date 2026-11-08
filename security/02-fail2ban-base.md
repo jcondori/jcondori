@@ -52,6 +52,9 @@ En Ubuntu 24.04, la versión inicial del paquete fallaba al arrancar con `Module
 
 **Nunca edites `jail.conf`**: se sobrescribe al actualizar el paquete. Todo va en `jail.local` y en `jail.d/*.local`.
 
+El paquete de Ubuntu/Debian ya trae `jail.d/defaults-debian.conf`, que activa `sshd` con `backend = systemd` y
+`banaction = nftables`. No lo borres: los archivos `.local` de este paso se cargan después y mandan sobre él.
+
 ### Valores por defecto
 
 Valen para todas las jails, también las del paso 6, salvo que la jail los cambie.
@@ -139,13 +142,23 @@ systemctl enable fail2ban
 fail2ban-client status        # debe listar: recidive, sshd
 ```
 
+`fail2ban-client -t` puede avisar `'allowipv6' not defined in 'Definition'`. Es inofensivo: usa el valor por defecto.
+
 ## Verificación del paso 2
 
-Comprueba que el filtro de SSH reconoce los fallos del journal:
+Comprueba que el filtro de SSH reconoce los fallos. Se prueba sobre las últimas 24 h del journal, volcadas a un archivo,
+y con `mode=aggressive`, igual que la jail:
 
 ```bash
-fail2ban-regex systemd-journal /etc/fail2ban/filter.d/sshd.conf
+journalctl _COMM=sshd --since "-24h" -o short > /root/ssh-24h.log
+fail2ban-regex /root/ssh-24h.log "sshd[mode=aggressive]"
+rm /root/ssh-24h.log
 ```
+
+No uses `fail2ban-regex systemd-journal ...`: lee el journal **entero**. Con el tope de 200 MB del paso 1 tarda unos
+segundos, pero sin él (1,4 GB en una VM de 1 GB de RAM) no termina y hay que matarlo. Ojo al matarlo con
+`pkill -f fail2ban-regex` dentro de `ssh host '...'`: el patrón coincide con la propia línea de comandos de la sesión y
+la mata; usa `pkill -f "[f]ail2ban-regex"`.
 
 La salida dice cuántas líneas coinciden (`Failregex: N total`). En un servidor con IP pública, a las pocas horas ya hay
 bots probando: `fail2ban-client status sshd` debe mostrar fallos y alguna IP bloqueada.
