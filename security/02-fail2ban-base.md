@@ -195,6 +195,12 @@ tail -f /var/log/fail2ban.log
 2. `fail2ban-client unban <tu IP>`.
 3. Si tienes una IP fija o una VPN, añádela a `ignoreip` en `jail.local` y `systemctl reload fail2ban`.
 
+**Cuidado con el agente de llaves.** Con `mode = aggressive`, una conexión que se corta antes de autenticar cuenta como
+fallo. Si la llave vive en un agente que pide permiso en cada uso (Bitwarden, 1Password, KeePassXC), **cancelar el aviso
+o dejar que se agote** corta la conexión así: 3 veces en 10 minutos bloquean tu IP, y si se repite, `recidive` la saca
+una semana de **todos** los puertos, web incluida. Si te pasa a menudo y no tienes IP fija, sube `maxretry` en
+`sshd.local` o quita `mode = aggressive`.
+
 ## Notas
 
 - **Firewall de la nube:** Fail2ban bloquea en nftables, dentro de la VM. El firewall de GCP sigue dejando pasar el

@@ -35,7 +35,7 @@ Solo deben estar abiertos al mundo:
 | Puerto | Uso |
 |---|---|
 | tcp/22 | SSH |
-| tcp/80 | Solo redirección a HTTPS (acme.sh valida por DNS, no usa este puerto) |
+| tcp/80 | Redirección a HTTPS. Con acme.sh (valida por DNS) no hace falta para el certificado; con Certbot **sí**: renueva por HTTP en este puerto y cerrarlo rompe la renovación |
 | tcp/443 | Sitios |
 
 Los puertos internos de las aplicaciones (3000, 8069, etc.) **nunca** se abren en el firewall.
