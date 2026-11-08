@@ -1,5 +1,12 @@
 # Nginx con SSL wildcard y renovación automática — acme.sh (GoDaddy)
 
+> Paso 3 de la serie [Seguridad de un servidor web](../security/README.md) · Anterior:
+> [paso 2, Fail2ban base](../security/02-fail2ban-base.md) · Siguiente:
+> [paso 4, Nginx: configuración del servidor](../security/04-nginx-servidor.md)
+>
+> **Si el servidor ya tiene el certificado con Certbot** (`/etc/letsencrypt/live/...`), sáltate este manual y sigue con
+> el paso 4, aplicando su sección [Si usas Certbot](../security/04-nginx-servidor.md#si-usas-certbot).
+
 Este manual documenta cómo emitir un certificado SSL wildcard (`*.jcondori.com`) con **Let's Encrypt**
 usando `acme.sh` y la API de GoDaddy, con renovación automática sin intervención manual.
 
