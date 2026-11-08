@@ -89,6 +89,14 @@ backend = auto
 Fail2ban recuerda los bloqueos en su base de datos (`/var/lib/fail2ban/fail2ban.sqlite3`), así que sobreviven a los
 reinicios.
 
+Esa memoria no es indefinida. Con `dbpurgeage = 1d` (default de `fail2ban.conf`), Fail2ban borra el historial de una IP
+cuando su último bloqueo tiene más de 1 día **y** han pasado más de 1 día + 3 × la duración de ese bloqueo (código de
+`_purge_bips` en `fail2ban/server/database.py`, Fail2ban 1.0.2). En la práctica: tras un bloqueo de 1 h, un bot que
+vuelve a los dos días empieza otra vez en 1 h. La escalada solo alcanza al bot insistente, que es el que importa;
+para el que vuelve de vez en cuando está `recidive`, que lee el log y no depende de esa base. Los bloqueos **activos**
+sí se restauran siempre al reiniciar. Si quieres que la escalada dure más, sube `dbpurgeage` en
+`/etc/fail2ban/fail2ban.d/local.conf` (sección `[DEFAULT]`, p. ej. `dbpurgeage = 1w`); la base crece poco.
+
 La duplicación la hace la fórmula por defecto (`bantime × 2^n`, con `n` = bloqueos anteriores de esa IP).
 `bantime.factor` es un multiplicador **encima** de esa fórmula, no el ritmo de crecimiento: con `factor = 2` todo
 saldría al doble (2 h, 4 h, 8 h…). Déjalo en `1`.
@@ -132,6 +140,20 @@ maxretry  = 3
 findtime  = 1d
 bantime   = 1w
 ```
+
+### Log de Fail2ban
+
+`/var/log/fail2ban.log` es el registro de cada IP detectada (`Found`) y cada bloqueo (`Ban`/`Unban`), y la fuente para
+medir ataques. El paquete lo rota cada semana y guarda solo 4: un mes. Súbelo a 13 semanas, para que cubra lo mismo que
+los logs de Nginx (90 días, [paso 4.5](04-nginx-servidor.md#45-logs)) y se puedan cruzar:
+
+```bash
+sed -i 's/^\(\s*\)rotate 4$/\1rotate 13/' /etc/logrotate.d/fail2ban
+logrotate -d /etc/logrotate.d/fail2ban 2>&1 | grep "rotating pattern"   # debe decir weekly (13 rotations)
+```
+
+Ocupa poco: unos 40 KB al día en un servidor pequeño con IP pública. `recidive` lee este mismo archivo con
+`findtime = 1d`, así que la rotación no le afecta.
 
 ### Aplicar
 
@@ -177,6 +199,11 @@ fail2ban-client status sshd
 
 # IPs bloqueadas en todas las jails
 fail2ban-client banned
+
+# Métricas: bloqueos por jail y top IPs bloqueadas (todo el histórico)
+# ("Increase Ban" = bloqueo escalado por bantime.increment; también cuenta)
+zgrep -hoE "\[[a-z-]+\] (Increase )?Ban " /var/log/fail2ban.log* | sed -E "s/ (Increase )?Ban //" | sort | uniq -c | sort -rn
+zgrep -hoE "\] (Increase )?Ban [0-9a-f.:]+" /var/log/fail2ban.log* | awk '{print $NF}' | sort | uniq -c | sort -rn | head
 
 # Desbloquear una IP (en todas las jails o en una)
 fail2ban-client unban 203.0.113.7

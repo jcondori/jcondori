@@ -4,7 +4,7 @@
 > · Siguiente: [paso 5, un sitio por aplicación](05-nginx-sitio.md)
 
 Configuración de Nginx que se hace **una sola vez por máquina** y vale para cualquier aplicación: versión oculta, TLS,
-tiempos, redirección a HTTPS y servers por defecto. Lo que cambia según la aplicación va en el
+tiempos, logs, redirección a HTTPS y servers por defecto. Lo que cambia según la aplicación va en el
 [paso 5](05-nginx-sitio.md). Probado en Ubuntu 24.04 con Nginx 1.24.
 
 A diferencia de Certbot, acme.sh **no edita la configuración de Nginx**: no crea la redirección de HTTP a HTTPS ni
@@ -25,6 +25,7 @@ incluye ajustes de TLS. Todo eso se escribe a mano en este paso.
 | Cabeceras del proxy, reutilizables por todos los sitios | `snippets/proxy.conf` |
 | Puerto 80: dominio redirige a HTTPS, IP se bloquea | `sites-available/default` |
 | Puerto 443 por defecto: cortar el handshake TLS | `conf.d/default-ssl-reject.conf` |
+| Logs: cada petición con host, tiempos, TLS e ID; handshakes rechazados; 90 días | `00-base.conf`, `default-ssl-reject.conf`, `/etc/logrotate.d/nginx` |
 
 ## Antes de tocar nada
 
@@ -35,6 +36,7 @@ Respalda cada archivo antes de editarlo y valida antes de recargar. Un `nginx -t
 ts=$(date +%Y%m%d%H%M%S)
 cp -a /etc/nginx/nginx.conf /root/nginx.conf.bak.$ts
 cp -a /etc/nginx/sites-available/default /root/nginx-default.bak.$ts
+cp -a /etc/logrotate.d/nginx /root/logrotate-nginx.bak.$ts
 ```
 
 Después de cada cambio:
@@ -78,6 +80,13 @@ map $http_upgrade $connection_upgrade {
     default upgrade;
     ''      close;
 }
+
+# Log de accesos: formato "combined" (Fail2ban lo lee igual) + campos de diagnóstico al final. Ver 4.5.
+log_format main_ext '$remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent '
+                    '"$http_referer" "$http_user_agent" '
+                    'host="$host" rt=$request_time urt="$upstream_response_time" '
+                    'us="$upstream_status" tls="$ssl_protocol" conn=$connection rid=$request_id';
+access_log /var/log/nginx/access.log main_ext;
 ```
 
 `conf.d/*.conf` se incluye dentro del mismo bloque `http { }` que `nginx.conf`, y Nginx rechaza una directiva repetida
@@ -85,9 +94,12 @@ en el mismo nivel (`"ssl_protocols" directive is duplicate`). Antes de crear el 
 ya estén ahí (las líneas ya comentadas no se tocan):
 
 ```bash
-sed -i -E 's/^(\s*)(server_tokens|ssl_protocols|ssl_ciphers|ssl_prefer_server_ciphers|ssl_session_cache|ssl_session_timeout|ssl_session_tickets|client_body_timeout|client_header_timeout|send_timeout|keepalive_timeout)\b/\1# \2/' /etc/nginx/nginx.conf
+sed -i -E 's/^(\s*)(server_tokens|ssl_protocols|ssl_ciphers|ssl_prefer_server_ciphers|ssl_session_cache|ssl_session_timeout|ssl_session_tickets|client_body_timeout|client_header_timeout|send_timeout|keepalive_timeout|access_log)\b/\1# \2/' /etc/nginx/nginx.conf
 nginx -t
 ```
+
+`access_log` es el caso traicionero: **no** da error si se repite, porque es acumulativa. Con la línea de `nginx.conf`
+activa, cada petición se escribiría dos veces en `access.log` (una por formato), y Fail2ban contaría doble.
 
 Notas:
 
@@ -110,10 +122,15 @@ proxy_set_header X-Forwarded-Proto $scheme;
 proxy_set_header X-Forwarded-Host $host;
 proxy_set_header Upgrade $http_upgrade;
 proxy_set_header Connection $connection_upgrade;
+proxy_set_header X-Request-ID $request_id;
 ```
 
 Sin estas cabeceras, la aplicación ve todas las peticiones como `127.0.0.1` por HTTP: no puede limitar por IP ni marcar
 las cookies como `Secure`. Y en el paso 6, Fail2ban no podría bloquear por los logs de la aplicación.
+
+`X-Request-ID` lleva a la aplicación el mismo ID que Nginx escribe en `rid=` (4.5). Si la aplicación lo registra en su
+log, una petición se sigue de Nginx a la aplicación con un solo `grep`. Nginx lo genera siempre: un `X-Request-ID` que
+mande el cliente se sustituye, así que no se puede falsificar.
 
 ## 4.3 Puerto 80: dominio a HTTPS, IP bloqueada
 
@@ -174,12 +191,142 @@ server {
     listen [::]:443 ssl default_server;
     server_name _;
     ssl_reject_handshake on;
+
+    # Handshakes rechazados (acceso por IP): no llegan a ser peticiones, así que solo quedan aquí (nivel info).
+    error_log /var/log/nginx/tls-reject.log info;
 }
 ```
 
 Junto con el `444` del puerto 80, el acceso por IP queda bloqueado en los dos puertos y sin revelar el dominio: el
 certificado tampoco se llega a enviar. Los clientes sin SNI (muy antiguos) no
 podrán entrar a ningún sitio; en la práctica no existen.
+
+## 4.5 Logs
+
+Objetivo: que **cada petición** quede registrada con lo necesario para medir ataques y depurar, y que se conserve lo
+bastante para ver tendencias. Nginx ya registra cada petición HTTP en `access.log` (también las que acaban en `444`),
+pero con el formato `combined` faltan datos clave y quedan fuera los intentos que no llegan a ser petición.
+
+### Formato `main_ext`
+
+Definido en `00-base.conf` (4.1). Las primeras columnas son **idénticas** a `combined`, así que los filtros de Fail2ban
+(paso 6) y cualquier herramienta que lea ese formato siguen funcionando. Los campos nuevos van al final:
+
+| Campo | Variable | Para qué |
+|---|---|---|
+| `host=` | `$host` | Qué se pidió: el subdominio, o la IP (escaneo). Sin él no se distinguen los sitios en un log compartido |
+| `rt=` | `$request_time` | Duración total en segundos, cliente incluido |
+| `urt=` | `$upstream_response_time` | Lo que tardó la aplicación. `rt` alto con `urt` bajo = cliente lento o red |
+| `us=` | `$upstream_status` | Código que dio la aplicación. `-` = Nginx respondió solo (444, 429, redirect del 80) |
+| `tls=` | `$ssl_protocol` | `TLSv1.3`/`TLSv1.2`; `-` = petición por HTTP |
+| `conn=` | `$connection` | Número de conexión: agrupa las peticiones de un mismo keep-alive. Coincide con el `*N` de `error.log` |
+| `rid=` | `$request_id` | ID único de la petición, el mismo que recibe la aplicación en `X-Request-ID` (4.2) |
+
+Ejemplo real:
+
+```text
+190.0.2.10 - - [08/Nov/2026:20:55:07 +0000] "GET /.git/config HTTP/1.1" 302 33 "-" "curl/8.16.0" host="app.jcondori.com" rt=0.002 urt="0.002" us="302" tls="TLSv1.3" conn=15895 rid=11b9ca63dc80a2ff6b8ac4374f0bb26b
+```
+
+Un solo `access.log` para todos los sitios, a propósito: las jails del paso 6 leen un archivo, y `host=` ya separa los
+sitios. Si un sitio necesita su propio archivo, pon `access_log /var/log/nginx/<sitio>.log main_ext;` en su server y
+añade esa ruta al `logpath` de las jails, o Fail2ban dejará de ver sus escaneos.
+
+### Lo que no es una petición
+
+| Evento | Dónde queda |
+|---|---|
+| Handshake TLS rechazado (acceso por IP al 443, 4.4) | `tls-reject.log`: `handshake rejected while SSL handshaking, client: <IP>` |
+| Petición rechazada por `limit_req` | `error.log` (`limiting requests`) **y** `access.log` con `429` |
+| Petición mal formada (basura, TLS enviado al puerto 80) | `access.log` con `400` y petición `"-"` |
+| Conexión que se abre y se cierra sin mandar nada | En Nginx, solo con `error_log` a nivel `info` (ver abajo) |
+| Escaneo de puertos (la conexión TCP ni se completa) | Nunca llega a Nginx: solo lo ve el firewall (ver abajo) |
+
+#### Por qué el `error_log` global se queda en su nivel por defecto
+
+- **Nginx no lo considera un error.** Desde 2013, una conexión cerrada sin datos ya no genera un `400` en
+  `access.log`: los navegadores abren conexiones de reserva que a veces no usan. Solo aparece a nivel `info`
+  (`client closed connection while waiting for request`).
+- **CIS NGINX Benchmark (3.3)** pide `error_log ... info` en sus versiones 1 y 2; la v3 acepta `notice` o `info` según la
+  política de la organización y avisa del volumen. Si hay que cumplir CIS, `error_log /var/log/nginx/error.log info;`
+  en `nginx.conf` es todo lo que hace falta: Fail2ban (paso 6) sigue leyendo `error.log` igual.
+- **Medido en un servidor pequeño** (20 min con un log `info` aparte): 22 líneas, unos 300 KB al día. 19 eran
+  peticiones mal formadas que ya estaban en `access.log` como `400`; conexiones vacías, **ninguna**. En un servidor con
+  mucho tráfico, además, cada keep-alive que se cierra deja una línea (`closed keepalive connection`).
+
+Conclusión: a nivel `info` Nginx apenas añade nada al `access.log`, así que se queda en su nivel por defecto. El nivel
+`info` se aplica solo al server del 4.4, que no tiene otro tráfico. Si alguna vez hace falta medirlo, se puede añadir
+un log aparte durante un rato, sin tocar el `error.log` (a nivel `http`, una directiva `error_log` reemplaza a la
+heredada, por eso van las dos):
+
+```nginx
+# conf.d/zz-measure-info.conf  (temporal: bórralo después)
+error_log /var/log/nginx/error.log;
+error_log /var/log/nginx/info-measure.log info;
+```
+
+#### Intentos que no llegan a Nginx: el firewall
+
+Los escaneos de puertos y las conexiones que se cortan antes de la petición se registran en la capa de red, no en el
+servidor web. En GCP hay dos opciones, ambas desde la consola (VPC network → Firewall) o con `gcloud`:
+
+| Opción | Qué registra | Coste |
+|---|---|---|
+| **Firewall Rules Logging** en `default-allow-http`/`-https`/`-ssh` | Cada conexión permitida por esa regla: IP, puerto, VM | Cloud Logging cobra por GB ingerido; desactiva *Include metadata* para reducir tamaño |
+| Regla **deny-all explícita** de prioridad baja con logging | Cada intento a un puerto cerrado (escaneos) | Igual. El *deny* implícito de GCP no se puede registrar: hace falta la regla explícita |
+| VPC Flow Logs | Una **muestra** de los flujos de la subred | Muestreo configurable (0.5 o menos); no dice qué regla aplicó |
+
+Ninguna se activa en esta serie: el volumen y el coste dependen del proyecto. Si se activan, se consultan en Logs
+Explorer (`logName:"compute.googleapis.com%2Ffirewall"`), no en la VM.
+
+### Retención
+
+Ubuntu rota los logs de Nginx a diario y guarda **14 días**: poco para ver tendencias o investigar algo que se descubre
+tarde. Súbelo a 90 (comprimidos ocupan poco: un servidor pequeño con escaneos genera ~1 MB al día sin comprimir):
+
+```bash
+sed -i 's/^\(\s*\)rotate 14$/\1rotate 90/' /etc/logrotate.d/nginx
+logrotate -d /etc/logrotate.d/nginx 2>&1 | grep "rotating pattern"   # debe decir (90 rotations)
+```
+
+El patrón `/var/log/nginx/*.log` incluye `tls-reject.log` sin tocar nada. Fail2ban sigue al archivo nuevo tras cada
+rotación (paso 6).
+
+### Privacidad
+
+Los logs guardan la URL completa, con su query string. Una aplicación que acepte secretos en la URL (`?token=...`)
+los deja escritos durante 90 días: mejor que vayan en una cabecera o en el cuerpo, que Nginx no registra. Los logs son
+`640 www-data:adm`; no los copies fuera del servidor sin pensarlo.
+
+### Consultas útiles
+
+```bash
+cd /var/log/nginx
+L="access.log"                       # o: zcat -f access.log* para todo el histórico
+
+# Peticiones por código (cuánto es escaneo: 444, 404, 302 a login…)
+awk '{print $9}' $L | sort | uniq -c | sort -rn
+
+# Top IPs y top rutas que acaban en 404/444
+awk '{print $1}' $L | sort | uniq -c | sort -rn | head
+awk '$9==404||$9==444 {print $7}' $L | sed 's/?.*//' | sort | uniq -c | sort -rn | head -20
+
+# Peticiones por host: escaneos por IP frente a cada sitio
+grep -oE 'host="[^"]*"' $L | sort | uniq -c | sort -rn
+
+# Peticiones lentas (> 2 s) y cuánto puso la aplicación
+grep -E ' rt=([2-9]|[0-9]{2,})\.' $L
+
+# Todo lo de una petición o una conexión
+grep 'rid=<id>' $L
+grep -E 'conn=15895 |\*15895 ' access.log error.log
+
+# Handshakes rechazados por día
+grep -c "handshake rejected" tls-reject.log
+```
+
+Para métricas continuas (paneles, alertas), estos mismos campos se pueden enviar a una herramienta externa (GoAccess,
+Loki, New Relic…). Eso queda fuera de esta serie.
 
 ## Si usas Certbot
 
@@ -272,6 +419,16 @@ curl -sk -o /dev/null https://<IP>/; echo "exit=$?"
 curl -s -o /dev/null -w "%{http_code} %{redirect_url}\n" http://jcondori.com/
 ```
 
+En el servidor, que esas tres peticiones quedaron registradas, una sola vez cada una y con los campos de 4.5:
+
+```bash
+grep "<tu IP>" /var/log/nginx/access.log | tail -3       # deben terminar en host="..." ... rid=...
+tail -1 /var/log/nginx/tls-reject.log                    # handshake rejected ..., client: <tu IP>
+```
+
+Para probar logs no pidas rutas trampa (`/.env`, `/.git/...`) desde tu IP si el paso 6 ya está hecho: con dos
+peticiones `nginx-scan` te bloquea un día.
+
 Y que la renovación de acme.sh sigue recargando Nginx sin errores:
 
 ```bash
@@ -285,6 +442,7 @@ TLS y cabeceras se verifican sobre un sitio real, al final del paso 5.
 ```bash
 cp -a /root/nginx.conf.bak.<ts> /etc/nginx/nginx.conf
 cp -a /root/nginx-default.bak.<ts> /etc/nginx/sites-available/default
+cp -a /root/logrotate-nginx.bak.<ts> /etc/logrotate.d/nginx
 rm /etc/nginx/conf.d/00-base.conf /etc/nginx/conf.d/default-ssl-reject.conf /etc/nginx/snippets/proxy.conf
 nginx -t && systemctl reload nginx
 ```

@@ -88,8 +88,9 @@ bantime  = 1d
 Con `maxretry = 2` basta con dos peticiones a rutas trampa. Si alguna aplicación tuya usa una de esas rutas (por
 ejemplo, un WordPress real), quítala del filtro.
 
-El filtro espera el formato `combined` por defecto de Nginx (empieza por la IP). Si cambiaste `log_format`, ajusta la
-expresión.
+El filtro espera el formato `combined` por defecto de Nginx (empieza por la IP). El formato `main_ext` del
+[paso 4.5](04-nginx-servidor.md#45-logs) empieza igual y solo añade campos al final, así que sirve sin cambios
+(probado). Con otro `log_format` distinto, ajusta la expresión.
 
 ## 6.3 Odoo: logins fallidos
 
