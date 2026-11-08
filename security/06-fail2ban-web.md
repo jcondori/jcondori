@@ -25,6 +25,7 @@ Se repite con cada aplicación nueva, después de su paso 5.
 |---|---|---|---|
 | `nginx-limit-req` | Quien choca varias veces con la zona `login` | `/var/log/nginx/error.log` | 10 en 10 min, 6 h |
 | `nginx-scan` | Peticiones a rutas trampa (`.env`, `.git`, `wp-login.php`…) | `/var/log/nginx/access.log` | 2 en 1 h, 1 día |
+| `nginx-noise` | Tráfico sin destino: por IP u otro host (`444`), mal formado (`400`), TLS rechazado | `access.log` + `tls-reject.log` | 5 en 1 h, 1 día |
 | `odoo-login` | Logins fallidos de Odoo | Log de Odoo | 5 en 10 min, 1 h |
 
 ## 6.1 Nginx: límite de login
@@ -92,6 +93,48 @@ El filtro espera el formato `combined` por defecto de Nginx (empieza por la IP).
 [paso 4.5](04-nginx-servidor.md#45-logs) empieza igual y solo añade campos al final, así que sirve sin cambios
 (probado). Con otro `log_format` distinto, ajusta la expresión.
 
+### Tráfico sin destino: `nginx-noise`
+
+Tras el paso 4, quien entra por IP (o con un `Host` que no es un sitio) no recibe nada: `444` en el 80 y handshake
+rechazado en el 443. Lo mismo quien manda basura o TLS al puerto 80 (`400`). No obtienen información, pero pueden seguir
+llamando. Esta jail bloquea a quien insiste, para reducir ruido en los logs. Gana poco en seguridad (ya no consiguen
+nada), y el riesgo es bajo: un usuario legítimo nunca entra por IP.
+
+Requiere el `tls-reject.log` del [paso 4.4](04-nginx-servidor.md#44-puerto-443-por-defecto-cortar-el-handshake).
+
+`/etc/fail2ban/filter.d/nginx-noise.conf`:
+
+```ini
+[Definition]
+failregex = ^<HOST> - \S+ \[[^\]]*\] "[^"]*" (?:400|444) 
+            handshake rejected while SSL handshaking, client: <HOST>, server:
+ignoreregex =
+```
+
+Un solo filtro con una expresión por log: cada línea solo coincide con la de su archivo.
+
+Añade a `/etc/fail2ban/jail.d/nginx.local`:
+
+```ini
+[nginx-noise]
+enabled  = true
+port     = http,https
+filter   = nginx-noise
+logpath  = /var/log/nginx/access.log
+           /var/log/nginx/tls-reject.log
+maxretry = 5
+findtime = 1h
+bantime  = 1d
+```
+
+`maxretry = 5` y no 2 como `nginx-scan`: un `444` o un `400` solo no delata a nadie (un navegador antiguo, un enlace con
+la IP), cinco en una hora sí. Las rutas trampa pedidas por IP cuentan en las dos jails; da igual, la primera que llegue
+al límite bloquea.
+
+Lo que sigue sin bloquearse, a propósito: escaneos al dominio con rutas fuera de la lista de `nginx-scan` (la
+aplicación responde y no filtra nada) y botnets que hacen 1-2 intentos por IP (ningún límite por IP las frena; eso
+requiere un WAF o CDN delante, fuera de esta serie).
+
 ## 6.3 Odoo: logins fallidos
 
 Odoo escribe una línea por cada login fallido, con la IP del cliente:
@@ -142,6 +185,8 @@ Antes de activar las jails, comprueba que cada filtro reconoce las líneas reale
 ```bash
 fail2ban-regex /var/log/nginx/error.log /etc/fail2ban/filter.d/nginx-limit-req.conf
 fail2ban-regex /var/log/nginx/access.log /etc/fail2ban/filter.d/nginx-scan.conf
+fail2ban-regex /var/log/nginx/access.log /etc/fail2ban/filter.d/nginx-noise.conf
+fail2ban-regex /var/log/nginx/tls-reject.log /etc/fail2ban/filter.d/nginx-noise.conf
 fail2ban-regex /var/log/odoo/odoo.log /etc/fail2ban/filter.d/odoo-login.conf
 ```
 
@@ -160,13 +205,14 @@ fail2ban-regex '203.0.113.7 - - [08/Nov/2026:19:20:00 +0000] "GET /.env HTTP/1.1
 ```bash
 fail2ban-client -t            # valida toda la configuración
 systemctl reload fail2ban
-fail2ban-client status        # debe listar también: nginx-limit-req, nginx-scan, odoo-login
+fail2ban-client status        # debe listar también: nginx-limit-req, nginx-noise, nginx-scan, odoo-login
 ```
 
 ## Verificación del paso 6
 
 ```bash
 fail2ban-client status nginx-scan
+fail2ban-client status nginx-noise    # "File list" debe incluir access.log y tls-reject.log
 fail2ban-client status odoo-login
 fail2ban-client banned
 ```
@@ -194,7 +240,7 @@ bloquea tu IP durante 6 h. Si pasa, ver "Si te bloqueas a ti mismo" en el [paso 
 
 ```bash
 rm /etc/fail2ban/jail.d/nginx.local /etc/fail2ban/jail.d/odoo.local
-rm /etc/fail2ban/filter.d/nginx-scan.conf /etc/fail2ban/filter.d/odoo-login.conf
+rm /etc/fail2ban/filter.d/nginx-scan.conf /etc/fail2ban/filter.d/nginx-noise.conf /etc/fail2ban/filter.d/odoo-login.conf
 systemctl reload fail2ban
 ```
 
