@@ -24,6 +24,7 @@ correspondiente.
 | 4 | Nginx: configuración del servidor (una vez) | [04-nginx-servidor.md](04-nginx-servidor.md) |
 | 5 | Nginx: un sitio por aplicación | [05-nginx-sitio.md](05-nginx-sitio.md) |
 | 6 | Fail2ban: jails de Nginx y de las aplicaciones | [06-fail2ban-web.md](06-fail2ban-web.md) |
+| 7 | Odoo: endurecimiento de la aplicación (solo sitios Odoo) | [07-odoo-seguridad.md](07-odoo-seguridad.md) |
 
 **Por qué este orden:**
 
@@ -32,8 +33,11 @@ correspondiente.
 - Las jails web de Fail2ban (paso 6) van al final: leen los logs de Nginx y de las aplicaciones, que antes no existen, y
   sus filtros se prueban con líneas reales. Además, las pruebas del paso 5 provocan bloqueos a propósito, y con esas
   jails activas te bloquearías a ti mismo.
+- El paso 7 es la capa de aplicación de Odoo: solo aplica si el servidor publica Odoo, y da por hechos el proxy (paso 4)
+  y las jails (paso 6). Un servidor que solo sirve otras aplicaciones lo omite.
 
-**Aplicación nueva en un servidor ya montado:** repite los pasos 5 y 6, en ese orden.
+**Aplicación nueva en un servidor ya montado:** repite los pasos 5 y 6, en ese orden; si la aplicación es Odoo, añade el
+paso 7.
 
 ## Server ya configurado a mano
 

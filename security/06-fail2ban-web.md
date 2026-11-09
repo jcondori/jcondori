@@ -1,7 +1,7 @@
 # Paso 6: Fail2ban para Nginx y las aplicaciones
 
 > Serie [Seguridad de un servidor web](README.md) · Anterior: [paso 5, un sitio por aplicación](05-nginx-sitio.md)
-> · Último paso de la serie
+> · Siguiente: [paso 7, Odoo](07-odoo-seguridad.md)
 
 Jails que leen los logs de Nginx y de las aplicaciones: bloquean a quien insiste contra un login y a quien escanea rutas
 conocidas. Usan la base del [paso 2](02-fail2ban-base.md): mismos valores por defecto, mismo bloqueo con nftables, y la
@@ -137,19 +137,24 @@ requiere un WAF o CDN delante, fuera de esta serie).
 
 ## 6.3 Odoo: logins fallidos
 
-Odoo escribe una línea por cada login fallido, con la IP del cliente:
+Odoo escribe una línea por cada login fallido, con la IP del cliente. El formato cambia según la versión:
 
 ```text
+# Odoo 18 o anterior
 2026-11-08 19:20:00,123 1234 INFO midb odoo.addons.base.models.res_users: Login failed for db:midb login:admin from 203.0.113.7
+# Odoo 19 o superior
+2026-11-08 19:20:00,123 1234 INFO midb odoo.addons.base.models.res_users: Login failed for login:admin from 203.0.113.7
 ```
 
-`/etc/fail2ban/filter.d/odoo-login.conf`:
+`/etc/fail2ban/filter.d/odoo-login.conf` (el `db:` es opcional, cubre los dos formatos):
 
 ```ini
 [Definition]
-failregex = ^\s*\d+ INFO \S+ odoo\.addons\.base\.models\.res_users: Login failed for db:\S+ login:.* from <HOST>\s*$
+failregex = ^\s*\d+ INFO \S+ odoo\.addons\.base\.models\.res_users: Login failed for (?:db:\S+ )?login:.* from <HOST>\s*$
 ignoreregex =
 ```
+
+Las líneas `from n/a` (login sin petición HTTP: consola, scripts) no coinciden, a propósito.
 
 `/etc/fail2ban/jail.d/odoo.local`:
 
@@ -248,5 +253,5 @@ Las IPs que esas jails tenían bloqueadas quedan libres al recargar. `sshd` y `r
 
 ---
 
-Fin de la serie. Con una aplicación nueva: [paso 5](05-nginx-sitio.md) y luego este paso 6. Índice:
-[README](README.md).
+Con una aplicación nueva: [paso 5](05-nginx-sitio.md) y luego este paso 6. Si es Odoo:
+[paso 7](07-odoo-seguridad.md). Índice: [README](README.md).
