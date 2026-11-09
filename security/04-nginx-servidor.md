@@ -106,6 +106,9 @@ Notas:
 - No actives `ssl_stapling`: Let's Encrypt dejó de publicar OCSP en 2025, y Nginx avisaría en cada recarga.
 - El nombre empieza por `00-` para que se cargue antes que los sitios (`conf.d/*.conf` va en orden alfabético) y el
   `map` y la zona ya existan cuando un sitio los usa.
+- **Muchos subdominios:** con varios sitios (o subdominios largos) Nginx puede fallar al recargar con
+  `could not build server_names_hash, you should increase server_names_hash_bucket_size`. Añade en este archivo
+  `server_names_hash_bucket_size 128;` (o 64) y recarga.
 
 ## 4.2 Cabeceras del proxy
 
@@ -201,6 +204,19 @@ Junto con el `444` del puerto 80, el acceso por IP queda bloqueado en los dos pu
 certificado tampoco se llega a enviar. Los clientes sin SNI (muy antiguos) no
 podrán entrar a ningún sitio; en la práctica no existen.
 
+**Valida que el `default_server` del 443 sea este, no una aplicación.** Solo puede haber un `default_server` por puerto.
+Si un sitio quedó con `listen 443 ssl default_server` y `server_name _` (a propósito o por descuido), es él quien
+responde a cualquier `https://<IP>` o host desconocido, sirviendo la aplicación con el certificado wildcard. Corrígelo:
+quítale `default_server`, dale un `server_name` explícito (su subdominio) y deja que este server de rechazo sea el único
+por defecto. Compruébalo:
+
+```bash
+grep -rn "default_server" /etc/nginx/
+```
+
+En el 443 debe aparecer **solo** el `default-ssl-reject.conf`. Tras el cambio, la aplicación responde únicamente a su
+subdominio nombrado; el acceso por IP cae en el rechazo.
+
 ## 4.5 Logs
 
 Objetivo: que **cada petición** quede registrada con lo necesario para medir ataques y depurar, y que se conserve lo
@@ -268,16 +284,21 @@ error_log /var/log/nginx/info-measure.log info;
 #### Intentos que no llegan a Nginx: el firewall
 
 Los escaneos de puertos y las conexiones que se cortan antes de la petición se registran en la capa de red, no en el
-servidor web. En GCP hay dos opciones, ambas desde la consola (VPC network → Firewall) o con `gcloud`:
+servidor web. Dónde verlos depende del proveedor:
 
-| Opción | Qué registra | Coste |
-|---|---|---|
-| **Firewall Rules Logging** en `default-allow-http`/`-https`/`-ssh` | Cada conexión permitida por esa regla: IP, puerto, VM | Cloud Logging cobra por GB ingerido; desactiva *Include metadata* para reducir tamaño |
-| Regla **deny-all explícita** de prioridad baja con logging | Cada intento a un puerto cerrado (escaneos) | Igual. El *deny* implícito de GCP no se puede registrar: hace falta la regla explícita |
-| VPC Flow Logs | Una **muestra** de los flujos de la subred | Muestreo configurable (0.5 o menos); no dice qué regla aplicó |
+- **Firewall de la nube con logging** (la mayoría: GCP, AWS, Azure, Oracle Cloud; algunos VPS no lo ofrecen): activa el
+  registro de la regla que permite el tráfico y, si se quiere ver los escaneos a puertos cerrados, una regla de
+  **denegación explícita** con logging (el *deny* implícito no suele poder registrarse). El coste lo cobra el servicio de
+  logs del proveedor por volumen; reduce los metadatos si se puede. Se consultan en el panel de logs del proveedor, no en
+  la VM.
+- **Sin firewall de nube** (filtras con nftables/ufw en la VM): añade una regla `log` antes del `drop` para registrar los
+  intentos a puertos cerrados en el journal.
 
-Ninguna se activa en esta serie: el volumen y el coste dependen del proyecto. Si se activan, se consultan en Logs
-Explorer (`logName:"compute.googleapis.com%2Ffirewall"`), no en la VM.
+En GCP, en concreto (VPC network → Firewall, o `gcloud`): **Firewall Rules Logging** en `default-allow-http`/`-https`/`-ssh`
+registra cada conexión permitida; una **deny-all explícita** de prioridad baja con logging registra los escaneos; **VPC
+Flow Logs** da una muestra de la subred. Se consultan en Logs Explorer (`logName:"compute.googleapis.com%2Ffirewall"`).
+
+Nada de esto se activa en esta serie: el volumen y el coste dependen del proyecto.
 
 ### Retención
 

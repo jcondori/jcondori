@@ -1,7 +1,18 @@
 # Seguridad de un servidor web
 
 Serie de manuales para dejar seguro un servidor Linux que publica aplicaciones (Node, Odoo, etc.) detrás de Nginx con
-HTTPS. Se siguen **en orden**: cada paso da por hecho el anterior. Probado en Ubuntu 24.04.
+HTTPS. Se siguen **en orden**: cada paso da por hecho el anterior.
+
+### Versiones probadas
+
+| Componente | Versiones |
+|---|---|
+| SO | Ubuntu 24.04 y 26.04 |
+| Fail2ban | 1.0.2 (24.04), 1.1.0 (26.04) |
+| Nginx | 1.24 (24.04), 1.28 (26.04) |
+
+Los comandos valen para cualquiera de esas versiones salvo que se indique; las diferencias se señalan en el paso
+correspondiente.
 
 ## Orden
 
@@ -24,6 +35,27 @@ HTTPS. Se siguen **en orden**: cada paso da por hecho el anterior. Probado en Ub
 
 **Aplicación nueva en un servidor ya montado:** repite los pasos 5 y 6, en ese orden.
 
+## Server ya configurado a mano
+
+Esta serie asume un servidor nuevo y propone un layout canónico: `conf.d/00-base.conf`, `snippets/proxy.conf`, un solo
+`access.log`, jails `nginx-scan`/`nginx-noise`. Un servidor que ya tiene Nginx y Fail2ban configurados a mano (confs por
+aplicación, un `log_format` propio, logs separados, otras jails) puede cumplir lo mismo con otra estructura. No hace
+falta rehacerlo: aplica lo que falta sin arrancar lo que funciona.
+
+Antes de tocar nada, compara contra la **intención** de cada paso, no contra sus nombres de archivo:
+
+| Intención del paso | Qué buscar en lo que ya hay |
+|---|---|
+| 4.1 Ajustes globales | `server_tokens off`, `ssl_protocols TLSv1.2 TLSv1.3`, timeouts contra slowloris. Pueden estar en `nginx.conf` en vez de `00-base.conf`. |
+| 4.2 Cabeceras del proxy | `proxy_set_header X-Forwarded-*`, `X-Real-IP`. Pueden estar inline en cada sitio en vez de un snippet. |
+| 4.4 default_server seguro | **Debe existir** un server por defecto en el 443 con `ssl_reject_handshake`. Si una aplicación es el `default_server`, se sirve a cualquiera por IP: corrígelo (ver paso 4.4). |
+| 4.5 Logs | Un `log_format` que conserve el prefijo `combined` (para que los filtros funcionen) y retención de 90 días. El nombre del formato da igual. |
+| 6 Jails web | Jails que lean los logs de Nginx y de las apps y bloqueen escaneos y logins fallidos. Con **logs separados por aplicación**, cada archivo debe ir en el `logpath` de la jail (varias rutas, una por línea), o esa app queda sin vigilar. |
+
+Regla práctica: aplica el paso solo donde la intención no esté cubierta. Si ya está, valida que el valor sea el correcto
+(p. ej. `fail2ban-regex` sobre el log real, paso 6.4) y sigue. Lo único innegociable es el **default_server seguro** del
+paso 4.4: siempre debe haber uno, y nunca puede ser una aplicación.
+
 ---
 
 ## Paso 1: firewall y SSH
@@ -40,17 +72,22 @@ Solo deben estar abiertos al mundo:
 
 Los puertos internos de las aplicaciones (3000, 8069, etc.) **nunca** se abren en el firewall.
 
-En GCP (VPC network → Firewall), las reglas se aplican por **etiqueta de red**:
+El filtrado se hace en el **firewall de la nube** (panel del proveedor), no en la VM. Según el proveedor:
 
-- La VM lleva solo las etiquetas `http-server` y `https-server` (reglas `default-allow-http` y `default-allow-https`).
-- Revisa que no tenga etiquetas de otras reglas. Por ejemplo, una regla de juegos que abre el 3000 lo expondría si
-  alguien pone esa etiqueta a la VM.
-- `default-allow-ssh` aplica a todas las VMs. Para cerrarlo más, limítala a tu IP fija o al rango de IAP
-  (`35.235.240.0/20`, si entras con `gcloud compute ssh --tunnel-through-iap`). Cambiarla afecta a todas las VMs del
-  proyecto.
+- **Reglas por puerto/origen** (Contabo, Hetzner, DigitalOcean, AWS Security Groups, Oracle Cloud, etc.): abre solo 22,
+  80 y 443 hacia `0.0.0.0/0` y cierra el resto. Si el proveedor trae todo abierto por defecto, crea una regla de
+  denegación o restringe la lista de permitidos. Limita el 22 a tu IP fija o VPN si la tienes.
+- **GCP (VPC network → Firewall), reglas por etiqueta de red:**
+  - La VM lleva solo las etiquetas `http-server` y `https-server` (reglas `default-allow-http` y `default-allow-https`).
+  - Revisa que no tenga etiquetas de otras reglas. Por ejemplo, una regla de juegos que abre el 3000 lo expondría si
+    alguien pone esa etiqueta a la VM.
+  - `default-allow-ssh` aplica a todas las VMs. Para cerrarlo más, limítala a tu IP fija o al rango de IAP
+    (`35.235.240.0/20`, si entras con `gcloud compute ssh --tunnel-through-iap`). Cambiarla afecta a todas las VMs del
+    proyecto.
 
-No hace falta activar `ufw` en la VM: el firewall de la nube ya filtra. Fail2ban (pasos 2 y 6) usa nftables por su
-cuenta.
+Si el proveedor **no** tiene firewall de nube, entonces sí activa `ufw` o reglas nftables en la VM (abre 22/80/443,
+deniega el resto). Con firewall de nube no hace falta `ufw`: ya filtra. En cualquier caso, Fail2ban (pasos 2 y 6) usa
+nftables por su cuenta.
 
 ### SSH solo con llave
 

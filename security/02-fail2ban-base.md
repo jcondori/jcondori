@@ -45,8 +45,9 @@ apt install -y fail2ban nftables
 systemctl status fail2ban --no-pager
 ```
 
-En Ubuntu 24.04, la versión inicial del paquete fallaba al arrancar con `ModuleNotFoundError: No module named
-'asynchat'` (Python 3.12). Si aparece, actualiza el paquete: la versión corregida ya está en los repositorios.
+Solo en Ubuntu 24.04 con la versión inicial del paquete (Fail2ban 1.0.x, Python 3.12): fallaba al arrancar con
+`ModuleNotFoundError: No module named 'asynchat'`. Si aparece, actualiza el paquete: la versión corregida ya está en los
+repositorios. En 26.04 (Fail2ban 1.1.0) no ocurre.
 
 ## Configuración
 
@@ -184,6 +185,13 @@ la mata; usa `pkill -f "[f]ail2ban-regex"`.
 
 La salida dice cuántas líneas coinciden (`Failregex: N total`). En un servidor con IP pública, a las pocas horas ya hay
 bots probando: `fail2ban-client status sshd` debe mostrar fallos y alguna IP bloqueada.
+
+> **`fail2ban-regex` puede dar `0 matched` aunque la jail funcione.** Con `backend = systemd`, la jail lee el journal
+> directamente, pero esta prueba lo vuelca con `-o short` a un archivo, y en algunas versiones (visto en Fail2ban 1.1.0 /
+> Ubuntu 26.04) ese formato no coincide con el filtro: `0 matched / N missed` sobre el archivo mientras la jail en vivo
+> lleva miles de `Total failed`. La verdad está en `fail2ban-client status sshd` (contadores `Total failed` y
+> `Currently banned`), no en el volcado. Si la jail cuenta fallos, el filtro funciona aunque `fail2ban-regex` sobre el
+> archivo diga `0`.
 
 ```bash
 fail2ban-client status sshd
